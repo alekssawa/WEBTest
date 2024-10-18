@@ -6,77 +6,145 @@
   <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"/>
   <title>GPS Tracker</title>
-<script src="https://www.openlayers.org/en/v4.6.5/build/ol.js"></script>
+  <style>
+    #marker-list {
+      margin-top: 10px;
+    }
+  </style>
 </head>
 
 <body>
-  <div id="map2" style="width: 800px; height: 800px"></div>
+  <div class="controls" style="margin: 10px 0;">
+    <button onclick="getCurrentLocation()">Узнать местоположение</button> <!-- Кнопка для получения местоположения -->
+    <button onclick="addDestination()">Добавить пункт назначения</button>
+    <button onclick="editDestination()">Редактировать последний пункт</button>
+    <button onclick="buildRoute()">Построить маршрут</button> <!-- Кнопка для построения маршрута -->
+  </div>
+
+  <div id="marker-list">
+    <h3>Список пунктов назначения</h3>
+    <ul id="list"></ul>
+  </div>
+
+  <div id="map" style="width: 800px; height: 800px"></div>
   <p id="address">Адрес: </p>
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
   <script>
     let map;
-    let marker;
-    function initMap(lat, lon)
-    {
-    	if (!map)
-    	{
-    		map = L.map('map2').setView([lat, lon], 13);
-    		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    		{
-    			maxZoom: 18,
-    			attribution: ''
-    		}).addTo(map);
-    		marker = L.marker([lat, lon]).addTo(map);
-    	}
-    	else
-    	{
-    		map.setView([lat, lon], 13);
-    		marker.setLatLng([lat, lon]);
-    	}
+    let destinations = []; // Массив пунктов назначения
+    let routingControl;
+    let currentMarker = null;
+
+    // Инициализация карты
+    function initMap() {
+      map = L.map('map').setView([0, 0], 2); // Установим начальное положение карты в центр мира
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: ''
+      }).addTo(map);
+
+      // Инициализация маршрута
+      routingControl = L.Routing.control({
+        waypoints: [],
+        routeWhileDragging: true
+      }).addTo(map);
     }
 
-    function getAddress(lat, lon)
-    {
-    	const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
+    // Получение адреса через Nominatim
+    function getAddress(lat, lon) {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
 
-    	fetch(url)
-    		.then(response => response.json())
-    		.then(data =>
-    		{
-    			const address = data.display_name;
-    			document.getElementById('address').innerHTML = `Адрес: ${address}`;
-    		})
-    		.catch(error => console.error('Ошибка при получении адреса:', error));
-    }
-    function updateLocation()
-    {
-    	if (navigator.geolocation)
-    	{
-    		navigator.geolocation.getCurrentPosition(position =>
-    		{
-    			const lat = position.coords.latitude;
-    			const lon = position.coords.longitude;
-
-    			initMap(lat, lon);
-    			getAddress(lat, lon);
-                console.log(lat,lon);
-    		}, error =>
-    		{
-    			console.error('Ошибка при получении координат:', error);
-    		});
-    	}
-    	else
-    	{
-    		console.log('Геолокация не поддерживается вашим браузером.');
-    	}
+      fetch(url)
+        .then(response => response.json())
+        .then(data => {
+          const address = data.display_name;
+          document.getElementById('address').innerHTML = `Адрес: ${address}`;
+        })
+        .catch(error => console.error('Ошибка при получении адреса:', error));
     }
 
-    setInterval(updateLocation, 2000);
+    // Получение текущего местоположения
+    function getCurrentLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(position => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
 
-    updateLocation();
+          // Добавляем маркер для текущего местоположения
+          const marker = L.marker([lat, lon]).addTo(map);
+          destinations.push(marker);
+          updateMarkerList(); // Обновляем список маркеров
+          map.setView([lat, lon], 13);
+          getAddress(lat, lon);
+          buildRoute(); // Построить маршрут после добавления маркера
+        }, error => {
+          console.error('Ошибка при получении координат:', error);
+        });
+      } else {
+        console.log('Геолокация не поддерживается вашим браузером.');
+      }
+    }
+
+    // Добавление пункта назначения
+    function addDestination() {
+      map.once('click', function(e) {
+        const latLng = e.latlng;
+        const marker = L.marker(latLng, { draggable: true }).addTo(map);
+
+        marker.on('dragend', function(event) {
+          buildRoute(); // Перестраиваем маршрут при перетаскивании маркера
+        });
+
+        destinations.push(marker); // Добавляем маркер в массив пунктов назначения
+        updateMarkerList(); // Обновляем список маркеров
+        buildRoute(); // Построить маршрут после добавления маркера
+      });
+    }
+
+    // Обновление списка маркеров
+    function updateMarkerList() {
+      const listElement = document.getElementById('list');
+      listElement.innerHTML = ''; // Очищаем список
+      destinations.forEach((marker, index) => {
+        const listItem = document.createElement('li');
+        listItem.innerText = `Пункт ${index + 1} - ${marker.getLatLng()}`;
+        const removeButton = document.createElement('button');
+        removeButton.innerText = 'Удалить';
+        removeButton.onclick = function() {
+          removeDestination(index);
+        };
+        listItem.appendChild(removeButton);
+        listElement.appendChild(listItem);
+      });
+    }
+
+    // Удаление пункта назначения по индексу
+    function removeDestination(index) {
+      if (index >= 0 && index < destinations.length) {
+        const marker = destinations[index];
+        map.removeLayer(marker); // Удаляем маркер с карты
+        destinations.splice(index, 1); // Удаляем маркер из массива
+        updateMarkerList(); // Обновляем список маркеров
+        buildRoute(); // Перестраиваем маршрут после удаления
+      }
+    }
+
+    // Построение маршрута
+    function buildRoute() {
+      if (destinations.length < 2) {
+        routingControl.setWaypoints([]); // Убираем маршрут, если пунктов недостаточно
+        return;
+      }
+      const waypoints = destinations.map(marker => marker.getLatLng());
+      routingControl.setWaypoints(waypoints);
+    }
+
+    // Инициализация карты при загрузке страницы
+    initMap();
   </script>
 
 </body>
 </html>
-
